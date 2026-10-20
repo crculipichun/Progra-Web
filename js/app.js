@@ -28,6 +28,8 @@ function vibrate(ms = 30) {
 
 let wakeLock = null;
 async function keepAwake(on) {
+  // Dentro de la app Android el puente nativo mantiene la pantalla encendida.
+  if (window.AndroidBridge) return window.AndroidBridge.keepAwake(!!on);
   try {
     if (on && 'wakeLock' in navigator && !wakeLock) {
       wakeLock = await navigator.wakeLock.request('screen');
@@ -523,7 +525,7 @@ $('#ed-remove').addEventListener('click', () => {
 // ---------- arranque ----------
 
 $('#secure-warning').hidden = window.isSecureContext;
-if ('serviceWorker' in navigator && window.isSecureContext) {
+if ('serviceWorker' in navigator && window.isSecureContext && !window.AndroidBridge) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 document.addEventListener('visibilitychange', () => {

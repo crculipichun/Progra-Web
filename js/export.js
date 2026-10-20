@@ -124,6 +124,17 @@ export function fileName(plan, ext) {
 
 /** Comparte el archivo si el sistema lo permite; si no, lo descarga. */
 export async function deliver(blob, name) {
+  // App Android: el puente nativo guarda el archivo en Descargas/Planos.
+  if (window.AndroidBridge) {
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+    window.AndroidBridge.saveFile(name, blob.type || 'application/octet-stream', String(dataUrl).split(',')[1]);
+    return;
+  }
   const file = new File([blob], name, { type: blob.type });
   if (navigator.canShare?.({ files: [file] })) {
     try {

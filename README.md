@@ -54,6 +54,22 @@ y desde el navegador elige **Añadir a la pantalla de inicio** para instalarla.
 
 En iPhone, al iniciar el modo cámara Safari pedirá permiso para "Movimiento y orientación".
 
+## APK para Android
+
+La carpeta `android/` contiene un envoltorio nativo mínimo (WebView) que empaqueta la app web
+en un APK instalable (Android 7.0 o superior). La app funciona sin conexión, pide los permisos de
+cámara y ubicación la primera vez, y guarda las exportaciones en **Descargas/Planos**.
+
+```bash
+sudo apt install android-sdk-platform-23 aapt apksigner zipalign dalvik-exchange
+android/build.sh        # genera android/build/planos.apk
+```
+
+Para instalarlo, copia el APK al teléfono, ábrelo y acepta "instalar apps de origen desconocido".
+El APK se firma con `android/debug.keystore` (clave de desarrollo, contraseña `android`) para
+que las nuevas versiones se instalen encima de la anterior; para publicar en Google Play usa
+tu propia clave (`KEYSTORE=... KS_PASS=... android/build.sh`).
+
 ## Estructura
 
 | Archivo | Contenido |
