@@ -1,7 +1,8 @@
 import {
   toLocal, distance, polygonArea, pathLength, segments, polarToPoint, floorDistance,
-  scalePoints, bounds, formatLength, formatArea,
+  scalePoints, bounds, formatLength, formatArea, orthogonalize, closeLoop, returnsToStart, sortByBearing,
 } from './geo.js';
+import { MotionTracker } from './motion.js';
 import { PlanView } from './plan-view.js';
 import { GpsCapture } from './gps.js';
 import { CameraCapture } from './camera.js';
@@ -9,7 +10,7 @@ import * as store from './storage.js';
 import { planToSVG, svgToPNGBlob, planToGeoJSON, fileName, deliver } from './export.js';
 
 const $ = (sel) => document.querySelector(sel);
-const MODE_LABEL = { gps: 'GPS', camera: 'Cámara', manual: 'Manual' };
+const MODE_LABEL = { gps: 'GPS', camera: 'Cámara', walk: 'Caminando', manual: 'Manual' };
 
 // ---------- utilidades de UI ----------
 
@@ -272,28 +273,71 @@ $('#gps-done').addEventListener('click', () => {
 });
 
 // ---------- captura con cámara ----------
+//
+// Dos formas de medir:
+//  · Caminando: el teléfono cuenta los pasos y sigue el rumbo, así que la posición
+//    se mueve contigo. En cada esquina apuntas la cruz a su pie (o te quedas
+//    encima) y se marca respecto a donde estás.
+//  · Desde un punto: te quedas quieto y solo giras; cada esquina se mide por
+//    la inclinación del teléfono y su altura.
 
-const camState = { active: false, raw: [], reading: null, height: 1.4, frame: 0 };
+const camState = {
+  active: false, mode: 'walk', marks: [], reading: null, frame: 0,
+  height: 1.4, stepLength: 0.7, square: true, pos: { x: 0, y: 0 }, trail: [], steps: 0,
+};
 const camView = new PlanView($('#cam-view'), { autoFit: true, interactive: false });
 const camera = new CameraCapture($('#cam-video'), {
   onReading: (r) => {
     camState.reading = r;
-    if (!camState.frame) camState.frame = requestAnimationFrame(updateCameraUI);
+    scheduleCameraUI();
   },
   onError: (err) => toast(err.message, 4000),
 });
+const motion = new MotionTracker({ onStep: onCameraStep });
 
 const MIN_PITCH = -5; // por encima de esto la distancia es demasiado imprecisa
 const MAX_DIST = 40;
+const MAX_WALK_AIM = 8; // caminando, solo se apunta a esquinas cercanas
 
-function camPoints() {
-  return camState.raw.map((r) => polarToPoint(floorDistance(camState.height, r.pitch), r.bearing));
+function scheduleCameraUI() {
+  if (!camState.frame) camState.frame = requestAnimationFrame(updateCameraUI);
+}
+
+/** Distancia a la que apunta la cruz, o null si no es fiable. */
+function aimDistance(r = camState.reading) {
+  if (!r || r.pitch >= MIN_PITCH) return null;
+  const d = floorDistance(camState.height, r.pitch);
+  return d <= (camState.mode === 'walk' ? MAX_WALK_AIM : MAX_DIST) ? d : null;
+}
+
+function markToPoint(m) {
+  if (m.pitch === null) return { x: m.pos.x, y: m.pos.y };
+  const o = polarToPoint(floorDistance(camState.height, m.pitch), m.bearing);
+  return { x: m.pos.x + o.x, y: m.pos.y + o.y };
+}
+
+const cornerPoints = () => camState.marks.map(markToPoint);
+
+/** Esquinas finales: ordenadas, con el recorrido cerrado y (opcional) a 90°. */
+function finalCameraPoints() {
+  let pts = cornerPoints();
+  if (camState.mode === 'point') pts = sortByBearing(pts);
+  else if (returnsToStart(pts)) pts = closeLoop(pts);
+  if (camState.square && pts.length >= 3) pts = orthogonalize(pts, true);
+  return pts;
 }
 
 function startCamera() {
-  Object.assign(camState, { active: true, raw: [], reading: null, height: store.getSettings().phoneHeight });
+  const s = store.getSettings();
+  Object.assign(camState, {
+    active: true, marks: [], reading: null, pos: { x: 0, y: 0 }, trail: [{ x: 0, y: 0 }], steps: 0,
+    height: s.phoneHeight, stepLength: s.stepLength, square: s.squareCorners, mode: s.cameraMode,
+  });
   $('#cam-height').value = camState.height;
+  $('#cam-step').value = camState.stepLength;
+  $('#cam-square').checked = camState.square;
   camera.start(); // dentro del gesto del usuario (iOS)
+  motion.start();
   keepAwake(true);
   updateCameraUI();
   navigate('#/camera');
@@ -302,69 +346,134 @@ function startCamera() {
   }, 2500);
 }
 
+function cameraPlanExtra() {
+  return camState.mode === 'walk'
+    ? { height: camState.height, stepLength: camState.stepLength }
+    : { height: camState.height };
+}
+
 function leaveCamera() {
   if (!camState.active) return;
   camera.stop();
+  motion.stop();
   keepAwake(false);
   camState.active = false;
-  const plan = saveCapture('camera', camPoints(), { height: camState.height });
-  if (plan) toast('Medición guardada en "Mis planos"');
+  if (camState.marks.length >= 2) {
+    saveCapture(camState.mode === 'walk' ? 'walk' : 'camera', finalCameraPoints(), cameraPlanExtra());
+    toast('Medición guardada en "Mis planos"');
+  }
+}
+
+function onCameraStep() {
+  if (!camState.active || camState.mode !== 'walk' || !camState.reading) return;
+  const d = polarToPoint(camState.stepLength, camState.reading.heading);
+  camState.pos = { x: camState.pos.x + d.x, y: camState.pos.y + d.y };
+  camState.trail.push(camState.pos);
+  camState.steps++;
+  scheduleCameraUI();
 }
 
 function updateCameraUI() {
   camState.frame = 0;
   const r = camState.reading;
+  const walk = camState.mode === 'walk';
+  const d = aimDistance();
   const tip = $('#cam-tip');
-  let rayEnd = null;
-  if (r) {
-    const d = floorDistance(camState.height, r.pitch);
-    const valid = r.pitch < MIN_PITCH && d <= MAX_DIST;
-    $('#cam-dist').textContent = valid ? formatLength(d) : '—';
-    $('#cam-pitch').textContent = `${r.pitch.toFixed(0)}°`;
-    $('#cam-bearing').textContent = `${r.bearing.toFixed(0)}°`;
-    tip.classList.toggle('warn', !valid);
-    tip.textContent = valid
-      ? 'Apunta la cruz al punto donde la esquina toca el suelo'
-      : 'Inclina el teléfono hacia el suelo';
-    rayEnd = polarToPoint(valid ? d : 1.5, r.bearing);
+
+  $('#cam-mode-walk').setAttribute('aria-checked', String(walk));
+  $('#cam-mode-point').setAttribute('aria-checked', String(!walk));
+  $('#cam-step-label').hidden = !walk;
+  $('#cam-l2').textContent = walk ? 'Pasos' : 'Inclinación';
+  $('#cam-l3').textContent = walk ? 'Recorrido' : 'Rumbo';
+  $('#cam-dist').textContent = d !== null ? formatLength(d) : '—';
+  if (walk) {
+    $('#cam-pitch').textContent = String(camState.steps);
+    $('#cam-bearing').textContent = formatLength(camState.steps * camState.stepLength);
+  } else {
+    $('#cam-pitch').textContent = r ? `${r.pitch.toFixed(0)}°` : '—';
+    $('#cam-bearing').textContent = r ? `${r.bearing.toFixed(0)}°` : '—';
   }
-  const pts = camPoints();
-  camView.setExtras({ origin: { x: 0, y: 0 }, ray: rayEnd });
-  camView.setPoints(pts, true);
-  $('#cam-undo').disabled = pts.length === 0;
-  $('#cam-mark').textContent = `Marcar esquina ${pts.length + 1}`;
+
+  let text;
+  if (d !== null) text = 'Cruz en el pie de la esquina → Marcar';
+  else if (!walk) text = 'Inclina el teléfono hacia el pie de la esquina';
+  else if (!camState.marks.length) text = 'Ve a una esquina, apunta la cruz a su pie y pulsa Marcar';
+  else text = 'Camina junto a la pared hasta la siguiente esquina, con el teléfono hacia delante';
+  tip.textContent = text;
+  tip.classList.toggle('warn', d === null && !walk);
+
+  const pos = walk ? camState.pos : { x: 0, y: 0 };
+  let ray = null;
+  if (r) {
+    const o = polarToPoint(d ?? 1.2, r.bearing);
+    ray = { x: pos.x + o.x, y: pos.y + o.y };
+  }
+  camView.setExtras({ origin: pos, ray, trail: walk ? camState.trail : null });
+  camView.setPoints(walk ? cornerPoints() : sortByBearing(cornerPoints()), !walk);
+  $('#cam-undo').disabled = camState.marks.length === 0;
+  $('#cam-mark').textContent = `Marcar esquina ${camState.marks.length + 1}`;
 }
 
 $('#cam-mark').addEventListener('click', () => {
   const r = camState.reading;
   if (!r) return toast('Sin datos del sensor de orientación.');
-  const d = floorDistance(camState.height, r.pitch);
-  if (r.pitch >= MIN_PITCH || d > MAX_DIST) return toast('Apunta más abajo, al pie de la esquina.');
-  camState.raw.push({ bearing: r.bearing, pitch: r.pitch });
+  const d = aimDistance(r);
+  if (camState.mode === 'point' && d === null) return toast('Apunta más abajo, al pie de la esquina.');
+  camState.marks.push({
+    pos: camState.mode === 'walk' ? { ...camState.pos } : { x: 0, y: 0 },
+    // Caminando sin apuntar al suelo: la esquina es donde estás.
+    pitch: d !== null ? r.pitch : null,
+    bearing: r.bearing,
+  });
   vibrate();
+  if (camState.mode === 'walk' && camState.marks.length >= 4 && returnsToStart(cornerPoints())) {
+    toast('Has vuelto al inicio: pulsa Terminar para cerrar el plano');
+  }
   updateCameraUI();
 });
 
 $('#cam-undo').addEventListener('click', () => {
-  camState.raw.pop();
+  camState.marks.pop();
   updateCameraUI();
 });
 
-$('#cam-height').addEventListener('change', (e) => {
-  const h = parseFloat(String(e.target.value).replace(',', '.'));
-  if (!(h >= 0.3 && h <= 3)) {
-    e.target.value = camState.height;
-    return toast('Altura entre 0.3 y 3 m');
-  }
-  camState.height = h;
-  store.saveSettings({ phoneHeight: h });
+function setCameraMode(mode) {
+  if (mode === camState.mode) return;
+  if (camState.marks.length) return toast('Deshaz las esquinas marcadas para cambiar de modo.');
+  camState.mode = mode;
+  camState.pos = { x: 0, y: 0 };
+  camState.trail = [{ x: 0, y: 0 }];
+  camState.steps = 0;
+  store.saveSettings({ cameraMode: mode });
   updateCameraUI();
+}
+$('#cam-mode-walk').addEventListener('click', () => setCameraMode('walk'));
+$('#cam-mode-point').addEventListener('click', () => setCameraMode('point'));
+
+function numberInput(sel, min, max, key, label) {
+  $(sel).addEventListener('change', (e) => {
+    const v = parseFloat(String(e.target.value).replace(',', '.'));
+    if (!(v >= min && v <= max)) {
+      e.target.value = camState[key];
+      return toast(`${label} entre ${min} y ${max} m`);
+    }
+    camState[key] = v;
+    store.saveSettings({ [key === 'height' ? 'phoneHeight' : key]: v });
+    updateCameraUI();
+  });
+}
+numberInput('#cam-height', 0.3, 3, 'height', 'Altura');
+numberInput('#cam-step', 0.3, 1.2, 'stepLength', 'Paso');
+
+$('#cam-square').addEventListener('change', (e) => {
+  camState.square = e.target.checked;
+  store.saveSettings({ squareCorners: camState.square });
 });
 
 $('#cam-done').addEventListener('click', () => {
-  if (camState.raw.length < 3) return toast('Marca al menos 3 esquinas.');
-  const plan = saveCapture('camera', camPoints(), { height: camState.height });
-  camState.raw = [];
+  if (camState.marks.length < 3) return toast('Marca al menos 3 esquinas.');
+  const plan = saveCapture(camState.mode === 'walk' ? 'walk' : 'camera', finalCameraPoints(), cameraPlanExtra());
+  camState.marks = [];
   navigate(`#/plan/${plan.id}`, true);
 });
 
@@ -373,6 +482,23 @@ $('#cam-done').addEventListener('click', () => {
 let plan = null;
 let addMode = false;
 let editorAddModeOnOpen = false;
+let undoStack = [];
+
+/** Guarda el estado actual para poder deshacer el siguiente cambio. */
+function snapshot() {
+  undoStack.push({ points: plan.points.map((p) => ({ ...p })), closed: plan.closed });
+  if (undoStack.length > 50) undoStack.shift();
+}
+
+/** Aplica nuevos vértices al plano, refresca la vista y guarda. */
+function commitPoints(points, { refit = false } = {}) {
+  plan.points = points;
+  if (editorView.selected >= points.length) editorView.selected = -1;
+  editorView.setPoints(plan.points, plan.closed);
+  if (refit) editorView.reset();
+  persist();
+  updateEditorInfo();
+}
 
 const editorView = new PlanView($('#editor-view'), {
   editable: true,
@@ -382,8 +508,10 @@ const editorView = new PlanView($('#editor-view'), {
     if (!live) persist();
   },
   onSelect: () => updateEditorInfo(),
+  onDragStart: () => snapshot(),
   onTap: (w) => {
     if (addMode) {
+      snapshot();
       plan.points.push({ x: w.x, y: w.y });
       editorView.userMoved = true; // no reencuadrar mientras se dibuja
       editorView.selected = plan.points.length - 1;
@@ -405,6 +533,7 @@ function openEditor(id) {
   const p = store.getPlan(id);
   if (!p) return false;
   plan = p;
+  undoStack = [];
   addMode = editorAddModeOnOpen;
   editorAddModeOnOpen = false;
   $('#plan-name').value = plan.name;
@@ -437,6 +566,8 @@ function updateEditorInfo() {
   const seg = selectedSegment();
   $('#ed-delete').disabled = sel < 0;
   $('#ed-scale').disabled = !seg;
+  $('#ed-undo').disabled = undoStack.length === 0;
+  $('#ed-square').disabled = plan.points.length < 3;
   const add = $('#ed-add');
   add.setAttribute('aria-pressed', String(addMode));
   $('#editor-hint').textContent = addMode
@@ -462,11 +593,9 @@ $('#ed-add').addEventListener('click', () => {
 $('#ed-delete').addEventListener('click', () => {
   const i = editorView.selected;
   if (i < 0) return;
-  plan.points.splice(i, 1);
+  snapshot();
   editorView.selected = -1;
-  editorView.setPoints(plan.points, plan.closed);
-  persist();
-  updateEditorInfo();
+  commitPoints(plan.points.filter((_, k) => k !== i));
 });
 
 $('#ed-scale').addEventListener('click', () => {
@@ -476,15 +605,22 @@ $('#ed-scale').addEventListener('click', () => {
   if (answer === null) return;
   const real = parseFloat(answer.replace(',', '.'));
   if (!(real > 0)) return toast('Introduce una medida válida.');
-  plan.points = scalePoints(plan.points, real / seg.length);
-  editorView.setPoints(plan.points, plan.closed);
-  editorView.reset();
-  persist();
-  updateEditorInfo();
-  toast('Plano escalado');
+  const factor = real / seg.length;
+  snapshot();
+  commitPoints(scalePoints(plan.points, factor), { refit: true });
+  if (plan.mode === 'walk' && plan.stepLength) {
+    // La medida real también calibra el largo de paso para las próximas mediciones.
+    plan.stepLength = Math.min(1.2, Math.max(0.3, plan.stepLength * factor));
+    store.saveSettings({ stepLength: +plan.stepLength.toFixed(3) });
+    persist();
+    toast(`Plano escalado · paso calibrado a ${plan.stepLength.toFixed(2)} m`, 3500);
+  } else {
+    toast('Plano escalado');
+  }
 });
 
 $('#ed-close').addEventListener('click', () => {
+  snapshot();
   plan.closed = !plan.closed;
   editorView.setPoints(plan.points, plan.closed);
   persist();
@@ -492,6 +628,20 @@ $('#ed-close').addEventListener('click', () => {
 });
 
 $('#ed-fit').addEventListener('click', () => editorView.reset());
+
+$('#ed-square').addEventListener('click', () => {
+  if (plan.points.length < 3) return;
+  snapshot();
+  commitPoints(orthogonalize(plan.points, plan.closed));
+  toast('Lados enderezados a 90°');
+});
+
+$('#ed-undo').addEventListener('click', () => {
+  const prev = undoStack.pop();
+  if (!prev) return;
+  plan.closed = prev.closed;
+  commitPoints(prev.points);
+});
 
 $('#ed-svg').addEventListener('click', () => {
   deliver(new Blob([planToSVG(plan)], { type: 'image/svg+xml' }), fileName(plan, 'svg'));

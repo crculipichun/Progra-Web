@@ -83,3 +83,46 @@ test('niceStep y formatos', () => {
   assert.equal(formatArea(12.345), '12.35 m²');
   assert.equal(formatArea(25000), '2.50 ha');
 });
+
+import { orthogonalize, closeLoop, returnsToStart, sortByBearing, walkBearing, cameraVector as cv, deviceTopVector, distance } from '../js/geo.js';
+
+const rectNoisy = [{ x: 0, y: 0 }, { x: 5.1, y: 0.4 }, { x: 5.4, y: 3.2 }, { x: 0.2, y: 2.9 }];
+
+test('orthogonalize deja ángulos rectos y cierra el polígono', () => {
+  const o = orthogonalize(rectNoisy, true);
+  assert.equal(o.length, 4);
+  for (let i = 0; i < 4; i++) {
+    const a = o[i], b = o[(i + 1) % 4], c = o[(i + 2) % 4];
+    const dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
+    near(dot, 0, 1e-6);
+  }
+  assert.ok(Math.abs(polygonArea(o) - 15) < 1.5);
+});
+
+test('orthogonalize respeta lados en diagonal fuera de la tolerancia', () => {
+  const tri = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 3 }];
+  const o = orthogonalize(tri, true);
+  near(distance(o[1], o[2]), 5, 0.3);
+});
+
+test('closeLoop elimina la esquina repetida y reparte el error', () => {
+  const walk = [{ x: 0, y: 0 }, { x: 4, y: 0.1 }, { x: 4.2, y: 3 }, { x: 0.1, y: 3.1 }, { x: 0.3, y: -0.2 }];
+  assert.ok(returnsToStart(walk));
+  const c = closeLoop(walk);
+  assert.equal(c.length, 4);
+  assert.deepEqual(c[0], { x: 0, y: 0 });
+  // tras repartir el error, las medidas se parecen a un rectángulo de 4 × 3
+  near(polygonArea(c), 12, 0.8);
+  assert.ok(!returnsToStart([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]));
+});
+
+test('sortByBearing ordena en el sentido de las agujas del reloj', () => {
+  const s = sortByBearing([{ x: -1, y: 1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: -1 }]);
+  assert.deepEqual(s.map((p) => [p.x, p.y]), [[1, 1], [1, -1], [-1, -1], [-1, 1]]);
+});
+
+test('walkBearing usa la parte superior si el teléfono va plano', () => {
+  near(walkBearing(cv(0, 0, 0), deviceTopVector(0, 0)), 0, 1e-9);
+  near(walkBearing(cv(0, 80, 0), deviceTopVector(0, 80)) % 360, 0, 1e-9);
+  near(walkBearing(cv(270, 5, 0), deviceTopVector(270, 5)), 90, 1e-9);
+});

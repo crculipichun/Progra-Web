@@ -28,7 +28,7 @@
         <button class="card-btn" data-new="camera">
           <span class="emoji" aria-hidden="true">📷</span>
           <strong>Con cámara</strong>
-          <small>Desde el centro de la habitación, apunta al pie de cada esquina.</small>
+          <small>Recorre la habitación y apunta al pie de cada esquina.</small>
         </button>
         <button class="card-btn" data-new="gps">
           <span class="emoji" aria-hidden="true">🛰️</span>
@@ -72,17 +72,23 @@
         <video id="cam-video" playsinline muted autoplay></video>
         <div class="crosshair" aria-hidden="true"></div>
         <div class="hud">
-          <div><span class="label">Distancia</span><b id="cam-dist">—</b></div>
-          <div><span class="label">Inclinación</span><b id="cam-pitch">—</b></div>
-          <div><span class="label">Rumbo</span><b id="cam-bearing">—</b></div>
+          <div><span class="label">Esquina a</span><b id="cam-dist">—</b></div>
+          <div><span class="label" id="cam-l2">Pasos</span><b id="cam-pitch">—</b></div>
+          <div><span class="label" id="cam-l3">Recorrido</span><b id="cam-bearing">—</b></div>
         </div>
-        <div id="cam-tip" class="cam-tip">Apunta la cruz al punto donde la esquina toca el suelo</div>
+        <div id="cam-tip" class="cam-tip"></div>
         <svg id="cam-view" class="mini-plan" role="img" aria-label="Vista previa"></svg>
       </div>
       <div class="cam-controls">
-        <label class="height">Altura del teléfono
-          <span><input id="cam-height" type="number" min="0.3" max="3" step="0.05" inputmode="decimal"> m</span>
-        </label>
+        <div class="segmented" role="radiogroup" aria-label="Forma de medir">
+          <button id="cam-mode-walk" role="radio" aria-checked="true">🚶 Caminando</button>
+          <button id="cam-mode-point" role="radio" aria-checked="false">📍 Desde un punto</button>
+        </div>
+        <div class="settings-row">
+          <label>Altura teléfono <span><input id="cam-height" type="number" min="0.3" max="3" step="0.05" inputmode="decimal"> m</span></label>
+          <label id="cam-step-label">Paso <span><input id="cam-step" type="number" min="0.3" max="1.2" step="0.01" inputmode="decimal"> m</span></label>
+          <label class="check"><input id="cam-square" type="checkbox" checked> Esquinas a 90°</label>
+        </div>
         <div class="toolbar">
           <button id="cam-mark" class="primary">Marcar esquina</button>
           <button id="cam-undo">Deshacer</button>
@@ -102,6 +108,8 @@
         <button id="ed-delete" disabled>Borrar vértice</button>
         <button id="ed-scale" disabled>Corregir medida</button>
         <button id="ed-close">Abrir/cerrar</button>
+        <button id="ed-square">Enderezar 90°</button>
+        <button id="ed-undo" disabled>Deshacer</button>
         <button id="ed-fit">Encuadrar</button>
       </div>
       <div class="toolbar wrap">

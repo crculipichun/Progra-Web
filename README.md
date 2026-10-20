@@ -7,14 +7,25 @@ No necesita compilación ni dependencias: es HTML, CSS y JavaScript puro.
 ## Modos de captura
 
 ### 📷 Con cámara (interiores)
-1. Colócate en un punto desde el que veas todas las esquinas de la habitación.
-2. Indica la **altura a la que sostienes el teléfono** (por defecto 1,40 m).
-3. Apunta la cruz al punto donde cada esquina toca el suelo y pulsa **Marcar esquina**, en orden.
-4. Pulsa **Terminar**.
 
-La app calcula la distancia a cada esquina por trigonometría:
-`distancia = altura / tan(ángulo hacia abajo)`, y la dirección con el giroscopio/brújula.
-Sin moverte del sitio, gira sobre ti mismo (no desplaces el teléfono).
+Tiene dos formas de medir, que se eligen arriba de los botones:
+
+**🚶 Caminando (recomendado)**: el plano sigue tu recorrido.
+1. Ve a una esquina, apunta la cruz al punto donde la esquina toca el suelo y pulsa **Marcar esquina**.
+2. Camina junto a la pared hasta la siguiente esquina con el teléfono hacia delante:
+   el acelerómetro cuenta los pasos y el giroscopio da la dirección.
+3. Repite en cada esquina. Al volver a la primera, márcala otra vez y pulsa **Terminar**:
+   la app cierra el recorrido y reparte el error acumulado.
+
+Al apuntar a cada esquina, la posición exacta se corrige con la cámara, así que no hace falta
+pegarse a la pared. Si no apuntas al suelo, la esquina se marca donde estás.
+
+**📍 Desde un punto**: te quedas quieto donde veas todas las esquinas, solo giras y apuntas al pie
+de cada una. La distancia se calcula como `altura / tan(ángulo hacia abajo)`.
+
+Con **Esquinas a 90°** activado, los lados que casi forman ángulo recto se enderezan.
+El largo de paso (0,70 m por defecto) se calibra solo: en el editor, usa **Corregir medida** en una
+pared medida con cinta métrica y el paso se ajusta para las siguientes mediciones.
 
 ### 🛰️ Con GPS (exteriores / terrenos)
 - **Marcar punto**: quédate quieto en un vértice; la app promedia varias lecturas
@@ -33,6 +44,7 @@ Toca el plano para añadir vértices.
   (escribes la medida real de ese lado, medida con una cinta métrica, y todo el plano se reescala;
   sirve para compensar errores de altura en el modo cámara).
 - **Abrir/cerrar** cambia entre polígono cerrado y recorrido abierto.
+- **Enderezar 90°** endereza los lados casi rectos; **Deshacer** revierte el último cambio.
 - Muestra área, perímetro y la medida de cada lado.
 - Exporta a **SVG**, **PNG**, **JSON** y **GeoJSON** (los dos últimos solo en planos GPS). En el
   móvil abre el menú de compartir del sistema.
@@ -80,6 +92,7 @@ tu propia clave (`KEYSTORE=... KS_PASS=... android/build.sh`).
 | `js/plan-view.js` | Vista SVG interactiva del plano |
 | `js/gps.js` | Lectura y promediado del GPS |
 | `js/camera.js` | Cámara trasera y sensores de orientación |
+| `js/motion.js` | Contador de pasos con el acelerómetro |
 | `js/export.js` | Exportación SVG/PNG/JSON/GeoJSON |
 | `js/storage.js` | Guardado local de planos y ajustes |
 | `sw.js`, `manifest.webmanifest` | PWA (instalable y sin conexión) |

@@ -1,5 +1,10 @@
-// Cámara trasera + sensores de orientación para medir esquinas desde un punto.
-import { cameraVector, vectorToAngles } from './geo.js';
+// Cámara trasera + sensores de orientación.
+import { cameraVector, deviceTopVector, vectorToAngles, walkBearing } from './geo.js';
+
+const SMOOTH = 0.2;
+const smooth = (prev, v) => (prev
+  ? { x: prev.x + (v.x - prev.x) * SMOOTH, y: prev.y + (v.y - prev.y) * SMOOTH, z: prev.z + (v.z - prev.z) * SMOOTH }
+  : v);
 
 export class CameraCapture {
   constructor(video, { onReading, onError } = {}) {
@@ -7,15 +12,16 @@ export class CameraCapture {
     this.onReading = onReading;
     this.onError = onError;
     this.stream = null;
-    this.vec = null; // vector suavizado
-    this.eventName = null;
-    this.absolute = false;
-    this._handler = (e) => this._onOrientation(e);
+    this.cam = null; // vector de la cámara suavizado
+    this.top = null; // vector superior suavizado
+    this.lastRelative = 0;
+    this._relative = (e) => this._onOrientation(e, true);
+    this._absolute = (e) => this._onOrientation(e, false);
   }
 
   /** Debe llamarse desde un gesto del usuario (requisito de iOS). */
   async start() {
-    // iOS 13+: el permiso de orientación debe pedirse antes de cualquier otro await.
+    // iOS 13+: el permiso de movimiento debe pedirse antes de cualquier otro await.
     const DOE = window.DeviceOrientationEvent;
     if (DOE && typeof DOE.requestPermission === 'function') {
       try {
@@ -25,9 +31,10 @@ export class CameraCapture {
       }
     }
 
-    this.absolute = 'ondeviceorientationabsolute' in window;
-    this.eventName = this.absolute ? 'deviceorientationabsolute' : 'deviceorientation';
-    window.addEventListener(this.eventName, this._handler);
+    // Se prefiere la orientación relativa (giroscopio): en interiores la brújula
+    // se desvía con las estructuras metálicas. La absoluta solo se usa si no hay otra.
+    window.addEventListener('deviceorientation', this._relative);
+    window.addEventListener('deviceorientationabsolute', this._absolute);
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -36,35 +43,27 @@ export class CameraCapture {
       });
       this.video.srcObject = this.stream;
       await this.video.play().catch(() => {});
-    } catch (err) {
+    } catch {
       this.onError?.(new Error('No se pudo abrir la cámara. Puedes seguir midiendo solo con los sensores.'));
     }
   }
 
   stop() {
-    if (this.eventName) window.removeEventListener(this.eventName, this._handler);
-    this.eventName = null;
+    window.removeEventListener('deviceorientation', this._relative);
+    window.removeEventListener('deviceorientationabsolute', this._absolute);
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.video.srcObject = null;
-    this.vec = null;
+    this.cam = this.top = null;
   }
 
-  _onOrientation(e) {
-    if (e.alpha === null && e.beta === null) return;
-    // Para un plano solo importan los ángulos relativos entre esquinas, así que
-    // basta con que alpha sea coherente durante la sesión (no hace falta el norte real).
-    const v = cameraVector(e.alpha, e.beta, e.gamma);
-    if (!this.vec) this.vec = v;
-    else {
-      // Filtro paso bajo sobre el vector (evita saltos de 359° a 0°).
-      const k = 0.2;
-      this.vec = {
-        x: this.vec.x + (v.x - this.vec.x) * k,
-        y: this.vec.y + (v.y - this.vec.y) * k,
-        z: this.vec.z + (v.z - this.vec.z) * k,
-      };
-    }
-    this.onReading?.({ ...vectorToAngles(this.vec), absolute: this.absolute || e.absolute === true });
+  _onOrientation(e, relative) {
+    if (e.alpha === null || e.beta === null) return;
+    const now = performance.now();
+    if (relative) this.lastRelative = now;
+    else if (now - this.lastRelative < 1000) return;
+    this.cam = smooth(this.cam, cameraVector(e.alpha, e.beta, e.gamma));
+    this.top = smooth(this.top, deviceTopVector(e.alpha, e.beta));
+    this.onReading?.({ ...vectorToAngles(this.cam), heading: walkBearing(this.cam, this.top) });
   }
 }

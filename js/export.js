@@ -59,7 +59,7 @@ export function planToSVG(plan, width = 1200) {
   const info = [
     closed ? `Área: ${formatArea(polygonArea(pts))}` : null,
     `${closed ? 'Perímetro' : 'Longitud'}: ${formatLength(pathLength(pts, plan.closed))}`,
-    `Método: ${{ gps: 'GPS', camera: 'Cámara', manual: 'Manual' }[plan.mode] || plan.mode}`,
+    `Método: ${{ gps: 'GPS', camera: 'Cámara', walk: 'Caminando', manual: 'Manual' }[plan.mode] || plan.mode}`,
     new Date(plan.updatedAt || Date.now()).toLocaleDateString(),
   ].filter(Boolean).join('   ·   ');
   out.push(`<text x="${pad}" y="68" font-size="17" fill="#475569">${xml(info)}</text>`);

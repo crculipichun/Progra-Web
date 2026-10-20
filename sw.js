@@ -1,5 +1,5 @@
 // Service worker: guarda la app en caché para que funcione sin conexión.
-const CACHE = 'planos-v1';
+const CACHE = 'planos-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -10,6 +10,7 @@ const ASSETS = [
   'js/plan-view.js',
   'js/gps.js',
   'js/camera.js',
+  'js/motion.js',
   'js/storage.js',
   'js/export.js',
   'icons/icon.svg',

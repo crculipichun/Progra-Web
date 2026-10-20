@@ -43,7 +43,15 @@ export function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-const DEFAULT_SETTINGS = { phoneHeight: 1.4, gpsMinStep: 2, gpsMaxAccuracy: 20, gpsSampleSeconds: 4 };
+const DEFAULT_SETTINGS = {
+  phoneHeight: 1.4,
+  stepLength: 0.7,
+  squareCorners: true,
+  cameraMode: 'walk',
+  gpsMinStep: 2,
+  gpsMaxAccuracy: 20,
+  gpsSampleSeconds: 4,
+};
 
 export function getSettings() {
   return { ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) };

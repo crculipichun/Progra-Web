@@ -14,6 +14,7 @@ export class PlanView {
    *   onChange(points, {live}) – al mover un vértice
    *   onSelect(index)          – al tocar un vértice
    *   onTap(worldPoint)        – al tocar una zona vacía
+   *   onDragStart()            – antes de empezar a mover un vértice
    */
   constructor(svg, opts = {}) {
     this.svg = svg;
@@ -42,7 +43,7 @@ export class PlanView {
     this.refresh();
   }
 
-  /** Elementos auxiliares: marker {x,y}, accuracy (m), origin {x,y}, ray {x,y}. */
+  /** Elementos auxiliares: marker {x,y}, accuracy (m), origin {x,y}, ray {x,y}, trail [{x,y}]. */
   setExtras(extras) {
     this.extras = extras || {};
     this.refresh();
@@ -68,6 +69,7 @@ export class PlanView {
   fit() {
     const pts = [...this.points];
     for (const k of ['marker', 'origin', 'ray']) if (this.extras[k]) pts.push(this.extras[k]);
+    if (this.extras.trail) pts.push(...this.extras.trail);
     const b = bounds(pts) || { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     const pad = 44;
     const w = Math.max(b.maxX - b.minX, 4);
@@ -105,7 +107,11 @@ export class PlanView {
       parts.push(`<line class="${j % 5 ? 'grid' : 'grid major'}" x1="0" y1="${y}" x2="${W}" y2="${y}"/>`);
     }
 
-    const { marker, accuracy, origin, ray } = this.extras;
+    const { marker, accuracy, origin, ray, trail } = this.extras;
+    if (trail && trail.length > 1) {
+      const d = trail.map((p) => this.toScreen(p)).map((p) => `${esc(p.x)},${esc(p.y)}`).join(' ');
+      parts.push(`<polyline class="trail" points="${d}"/>`);
+    }
     if (marker && accuracy) {
       const m = this.toScreen(marker);
       parts.push(`<circle class="accuracy" cx="${esc(m.x)}" cy="${esc(m.y)}" r="${esc(accuracy * s)}"/>`);
@@ -229,6 +235,7 @@ export class PlanView {
       return;
     }
     if (!d.moved && Math.hypot(p.x - d.start.x, p.y - d.start.y) < 6) return;
+    if (!d.moved && d.type === 'vertex') this.opts.onDragStart?.();
     d.moved = true;
     if (d.type === 'vertex') {
       const w = this.toWorld(p.x, p.y);
