@@ -77,12 +77,14 @@
           <div><span class="label" id="cam-l3">Recorrido</span><b id="cam-bearing">—</b></div>
         </div>
         <div id="cam-tip" class="cam-tip"></div>
+        <div id="cam-rec" class="cam-rec" hidden>● REC 0:00</div>
         <svg id="cam-view" class="mini-plan" role="img" aria-label="Vista previa"></svg>
       </div>
       <div class="cam-controls">
         <div class="segmented" role="radiogroup" aria-label="Forma de medir">
-          <button id="cam-mode-walk" role="radio" aria-checked="true">🚶 Caminando</button>
-          <button id="cam-mode-point" role="radio" aria-checked="false">📍 Desde un punto</button>
+          <button id="cam-mode-walk" role="radio" aria-checked="true">🚶 Caminar</button>
+          <button id="cam-mode-point" role="radio" aria-checked="false">📍 Un punto</button>
+          <button id="cam-mode-video" role="radio" aria-checked="false">🎥 Video</button>
         </div>
         <div class="settings-row">
           <label>Altura teléfono <span><input id="cam-height" type="number" min="0.3" max="3" step="0.05" inputmode="decimal"> m</span></label>
@@ -94,6 +96,29 @@
           <button id="cam-undo">Deshacer</button>
           <button id="cam-done" class="accent">Terminar</button>
         </div>
+      </div>
+    </section>
+
+    <!-- Revisión del video -->
+    <section id="review" class="screen" hidden>
+      <div class="rv-stage">
+        <video id="rv-video" playsinline muted preload="auto"></video>
+        <svg id="rv-overlay" class="rv-overlay" aria-label="Toca el pie de una esquina"></svg>
+        <div id="rv-loading" class="rv-loading">Preparando el video…</div>
+      </div>
+      <div class="rv-controls">
+        <button id="rv-play" class="icon-btn" aria-label="Reproducir">▶</button>
+        <input id="rv-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición del video">
+        <span id="rv-time" class="muted">0:00</span>
+      </div>
+      <div id="rv-chips" class="chips"></div>
+      <p id="rv-hint" class="hint">Pausa el video en cada esquina y toca el punto donde la esquina toca el suelo.</p>
+      <svg id="rv-plan" class="plan rv-plan" role="img" aria-label="Plano a partir del video"></svg>
+      <div id="rv-stats" class="stats"></div>
+      <div class="toolbar">
+        <button id="rv-undo">Deshacer</button>
+        <button id="rv-auto">Automático</button>
+        <button id="rv-done" class="accent">Crear plano</button>
       </div>
     </section>
 

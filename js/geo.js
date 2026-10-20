@@ -262,3 +262,77 @@ export function sortByBearing(points, origin = { x: 0, y: 0 }) {
   const b = (p) => (Math.atan2(p.x - origin.x, p.y - origin.y) + 2 * Math.PI) % (2 * Math.PI);
   return [...points].sort((p, q) => b(p) - b(q));
 }
+
+/** Eje derecho del teléfono (+X del dispositivo) en el mundo. */
+export function deviceRightVector(alpha, beta, gamma) {
+  const a = toRad(alpha || 0), b = toRad(beta || 0), g = toRad(gamma || 0);
+  const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+  return { x: cA * cG - sA * sB * sG, y: cG * sA + cA * sB * sG, z: -cB * sG };
+}
+
+/**
+ * Rayo que sale de la cámara por un píxel de la imagen.
+ * f = dirección de la cámara, r = derecha de la imagen, u = arriba de la imagen;
+ * nx, ny ∈ [-1, 1] (ny positivo hacia arriba); tanX/tanY = tangentes del semicampo de visión.
+ */
+export function pixelRay(f, r, u, nx, ny, tanX, tanY) {
+  return {
+    x: f.x + nx * tanX * r.x + ny * tanY * u.x,
+    y: f.y + nx * tanX * r.y + ny * tanY * u.y,
+    z: f.z + nx * tanX * r.z + ny * tanY * u.z,
+  };
+}
+
+/** Punto del suelo que corta el rayo lanzado desde `height` metros sobre `pos`, o null. */
+export function floorHit(pos, height, ray, maxDist = 15) {
+  if (ray.z >= -0.02) return null;
+  const t = height / -ray.z;
+  const dx = ray.x * t, dy = ray.y * t;
+  if (Math.hypot(dx, dy) > maxDist) return null;
+  return { x: pos.x + dx, y: pos.y + dy };
+}
+
+/** Simplifica un recorrido (Ramer–Douglas–Peucker). Devuelve los índices que se conservan. */
+export function simplifyPath(points, tolerance) {
+  if (points.length <= 2) return points.map((_, i) => i);
+  const keep = new Set([0, points.length - 1]);
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const A = points[a], B = points[b];
+    const len = distance(A, B);
+    let best = -1, bestD = tolerance;
+    for (let i = a + 1; i < b; i++) {
+      const P = points[i];
+      const d = len === 0
+        ? distance(A, P)
+        : Math.abs((B.x - A.x) * (A.y - P.y) - (A.x - P.x) * (B.y - A.y)) / len;
+      if (d > bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0) {
+      keep.add(best);
+      stack.push([a, best], [best, b]);
+    }
+  }
+  return [...keep].sort((x, y) => x - y);
+}
+
+/** Desplaza cada lado de un polígono cerrado `d` metros hacia fuera. */
+export function offsetPolygon(points, d) {
+  const n = points.length;
+  if (n < 3 || !d) return points.map((p) => ({ x: p.x, y: p.y }));
+  const sign = signedArea(points) >= 0 ? 1 : -1; // antihorario: exterior a la derecha
+  const lines = points.map((a, i) => {
+    const b = points[(i + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y, len = Math.hypot(ex, ey) || 1;
+    const nx = (sign * ey) / len, ny = (-sign * ex) / len;
+    return { p: { x: a.x + nx * d, y: a.y + ny * d }, e: { x: ex, y: ey }, n: { x: nx, y: ny } };
+  });
+  return points.map((pt, i) => {
+    const L1 = lines[(i - 1 + n) % n], L2 = lines[i];
+    const den = L1.e.x * L2.e.y - L1.e.y * L2.e.x;
+    if (Math.abs(den) < 1e-9) return { x: pt.x + L2.n.x * d, y: pt.y + L2.n.y * d };
+    const t = ((L2.p.x - L1.p.x) * L2.e.y - (L2.p.y - L1.p.y) * L2.e.x) / den;
+    return { x: L1.p.x + L1.e.x * t, y: L1.p.y + L1.e.y * t };
+  });
+}

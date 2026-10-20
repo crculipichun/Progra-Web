@@ -1,7 +1,9 @@
 import {
   toLocal, distance, polygonArea, pathLength, segments, polarToPoint, floorDistance,
   scalePoints, bounds, formatLength, formatArea, orthogonalize, closeLoop, returnsToStart, sortByBearing,
+  simplifyPath, offsetPolygon, pixelRay, floorHit,
 } from './geo.js';
+import { VideoRecorder, prepareSeekable, sampleAt, formatTime } from './video.js';
 import { MotionTracker } from './motion.js';
 import { PlanView } from './plan-view.js';
 import { GpsCapture } from './gps.js';
@@ -10,7 +12,7 @@ import * as store from './storage.js';
 import { planToSVG, svgToPNGBlob, planToGeoJSON, fileName, deliver } from './export.js';
 
 const $ = (sel) => document.querySelector(sel);
-const MODE_LABEL = { gps: 'GPS', camera: 'Cámara', walk: 'Caminando', manual: 'Manual' };
+const MODE_LABEL = { gps: 'GPS', camera: 'Cámara', walk: 'Caminando', video: 'Video', manual: 'Manual' };
 
 // ---------- utilidades de UI ----------
 
@@ -65,7 +67,7 @@ function thumbnail(plan) {
 // ---------- navegación ----------
 
 let current = null; // pantalla activa
-const leaveHandlers = { gps: leaveGps, camera: leaveCamera, editor: leaveEditor };
+const leaveHandlers = { gps: leaveGps, camera: leaveCamera, review: leaveReview, editor: leaveEditor };
 
 function navigate(hash, replace = false) {
   if (replace) history.replaceState(null, '', hash);
@@ -75,12 +77,13 @@ function navigate(hash, replace = false) {
 
 function route() {
   const [, screen = 'home', id] = location.hash.match(/^#\/?([^/]*)\/?(.*)$/) || [];
-  const target = ['gps', 'camera', 'plan'].includes(screen) ? screen : 'home';
+  const target = ['gps', 'camera', 'review', 'plan'].includes(screen) ? screen : 'home';
   const screenId = target === 'plan' ? 'editor' : target;
   if (current && current !== screenId) leaveHandlers[current]?.();
 
   if (target === 'gps' && !gpsState.active) return navigate('#/', true);
   if (target === 'camera' && !camState.active) return navigate('#/', true);
+  if (target === 'review' && !rv.active) return navigate('#/', true);
   if (target === 'plan' && !openEditor(decodeURIComponent(id))) return navigate('#/', true);
 
   document.querySelectorAll('.screen').forEach((el) => { el.hidden = el.id !== screenId; });
@@ -90,6 +93,7 @@ function route() {
     home: 'Planos',
     gps: 'Plano con GPS',
     camera: 'Plano con cámara',
+    review: 'Plano desde el video',
     editor: 'Editar plano',
   }[screenId] || 'Planos';
   if (screenId === 'home') renderHome();
@@ -280,15 +284,21 @@ $('#gps-done').addEventListener('click', () => {
 //    encima) y se marca respecto a donde estás.
 //  · Desde un punto: te quedas quieto y solo giras; cada esquina se mide por
 //    la inclinación del teléfono y su altura.
+//  · Video: se graba el recorrido junto con la orientación de cada fotograma;
+//    después el plano se saca automáticamente de los giros o tocando las
+//    esquinas en el video (pantalla de revisión).
 
 const camState = {
   active: false, mode: 'walk', marks: [], reading: null, frame: 0,
   height: 1.4, stepLength: 0.7, square: true, pos: { x: 0, y: 0 }, trail: [], steps: 0,
+  recording: false, recStart: 0, log: [], recTimer: 0,
 };
+const recorder = new VideoRecorder();
 const camView = new PlanView($('#cam-view'), { autoFit: true, interactive: false });
 const camera = new CameraCapture($('#cam-video'), {
   onReading: (r) => {
     camState.reading = r;
+    if (camState.recording) logSample(r);
     scheduleCameraUI();
   },
   onError: (err) => toast(err.message, 4000),
@@ -299,6 +309,17 @@ const MIN_PITCH = -5; // por encima de esto la distancia es demasiado imprecisa
 const MAX_DIST = 40;
 const MAX_WALK_AIM = 8; // caminando, solo se apunta a esquinas cercanas
 
+/** Segundos desde que empezó la grabación. */
+const recTime = () => (performance.now() - camState.recStart) / 1000;
+
+/** Guarda posición y orientación (~15 por segundo) para revisar luego el video. */
+function logSample(r) {
+  const t = recTime();
+  const last = camState.log[camState.log.length - 1];
+  if (last && t - last.t < 0.066) return;
+  camState.log.push({ t, pos: { ...camState.pos }, cam: r.cam, top: r.top, right: r.right });
+}
+
 function scheduleCameraUI() {
   if (!camState.frame) camState.frame = requestAnimationFrame(updateCameraUI);
 }
@@ -307,7 +328,7 @@ function scheduleCameraUI() {
 function aimDistance(r = camState.reading) {
   if (!r || r.pitch >= MIN_PITCH) return null;
   const d = floorDistance(camState.height, r.pitch);
-  return d <= (camState.mode === 'walk' ? MAX_WALK_AIM : MAX_DIST) ? d : null;
+  return d <= (camState.mode === 'point' ? MAX_DIST : MAX_WALK_AIM) ? d : null;
 }
 
 function markToPoint(m) {
@@ -354,6 +375,11 @@ function cameraPlanExtra() {
 
 function leaveCamera() {
   if (!camState.active) return;
+  if (camState.recording) {
+    recorder.stop();
+    stopRecordingUI();
+    toast('Grabación descartada');
+  }
   camera.stop();
   motion.stop();
   keepAwake(false);
@@ -365,10 +391,11 @@ function leaveCamera() {
 }
 
 function onCameraStep() {
-  if (!camState.active || camState.mode !== 'walk' || !camState.reading) return;
+  if (!camState.active || camState.mode === 'point' || !camState.reading) return;
+  if (camState.mode === 'video' && !camState.recording) return;
   const d = polarToPoint(camState.stepLength, camState.reading.heading);
   camState.pos = { x: camState.pos.x + d.x, y: camState.pos.y + d.y };
-  camState.trail.push(camState.pos);
+  camState.trail.push({ ...camState.pos, t: camState.recording ? recTime() : 0 });
   camState.steps++;
   scheduleCameraUI();
 }
@@ -376,12 +403,12 @@ function onCameraStep() {
 function updateCameraUI() {
   camState.frame = 0;
   const r = camState.reading;
-  const walk = camState.mode === 'walk';
+  const video = camState.mode === 'video';
+  const walk = camState.mode !== 'point'; // caminando o grabando: la posición se mueve
   const d = aimDistance();
   const tip = $('#cam-tip');
 
-  $('#cam-mode-walk').setAttribute('aria-checked', String(walk));
-  $('#cam-mode-point').setAttribute('aria-checked', String(!walk));
+  for (const m of ['walk', 'point', 'video']) $(`#cam-mode-${m}`).setAttribute('aria-checked', String(camState.mode === m));
   $('#cam-step-label').hidden = !walk;
   $('#cam-l2').textContent = walk ? 'Pasos' : 'Inclinación';
   $('#cam-l3').textContent = walk ? 'Recorrido' : 'Rumbo';
@@ -395,7 +422,11 @@ function updateCameraUI() {
   }
 
   let text;
-  if (d !== null) text = 'Cruz en el pie de la esquina → Marcar';
+  if (video) {
+    text = camState.recording
+      ? 'Camina junto a las paredes enfocando el pie de las paredes y las esquinas'
+      : 'Ponte en una esquina, pulsa Grabar y recorre la habitación hasta volver al inicio';
+  } else if (d !== null) text = 'Cruz en el pie de la esquina → Marcar';
   else if (!walk) text = 'Inclina el teléfono hacia el pie de la esquina';
   else if (!camState.marks.length) text = 'Ve a una esquina, apunta la cruz a su pie y pulsa Marcar';
   else text = 'Camina junto a la pared hasta la siguiente esquina, con el teléfono hacia delante';
@@ -405,16 +436,72 @@ function updateCameraUI() {
   const pos = walk ? camState.pos : { x: 0, y: 0 };
   let ray = null;
   if (r) {
-    const o = polarToPoint(d ?? 1.2, r.bearing);
+    // Caminando, el rayo se limita para que la vista no se aleje demasiado.
+    const o = polarToPoint(walk ? Math.min(d ?? 1.2, 2.5) : d ?? 1.2, r.bearing);
     ray = { x: pos.x + o.x, y: pos.y + o.y };
   }
   camView.setExtras({ origin: pos, ray, trail: walk ? camState.trail : null });
   camView.setPoints(walk ? cornerPoints() : sortByBearing(cornerPoints()), !walk);
   $('#cam-undo').disabled = camState.marks.length === 0;
-  $('#cam-mark').textContent = `Marcar esquina ${camState.marks.length + 1}`;
+  $('#cam-undo').hidden = video;
+  $('#cam-done').hidden = video;
+  const mark = $('#cam-mark');
+  mark.classList.toggle('recording', camState.recording);
+  mark.textContent = video
+    ? (camState.recording ? '■ Detener y revisar' : '● Grabar')
+    : `Marcar esquina ${camState.marks.length + 1}`;
+}
+
+function stopRecordingUI() {
+  camState.recording = false;
+  clearInterval(camState.recTimer);
+  $('#cam-rec').hidden = true;
+}
+
+async function toggleRecording() {
+  if (!camState.recording) {
+    if (!camState.reading) return toast('Sin datos del sensor de orientación.');
+    camState.pos = { x: 0, y: 0 };
+    camState.trail = [{ x: 0, y: 0, t: 0 }];
+    camState.steps = 0;
+    camState.log = [];
+    if (camera.stream && recorder.supported) {
+      camState.recStart = recorder.start(camera.stream);
+    } else {
+      camState.recStart = performance.now();
+      toast('No se puede grabar video aquí: se guardará solo el recorrido.', 4000);
+    }
+    camState.recording = true;
+    logSample(camState.reading);
+    const badge = $('#cam-rec');
+    badge.hidden = false;
+    badge.textContent = '● REC 0:00';
+    camState.recTimer = setInterval(() => { badge.textContent = `● REC ${formatTime(recTime())}`; }, 500);
+    vibrate();
+    updateCameraUI();
+    return;
+  }
+  const duration = recTime();
+  stopRecordingUI();
+  const blob = await recorder.stop();
+  if (camState.trail.length < 3 && duration < 3) {
+    updateCameraUI();
+    return toast('Grabación demasiado corta.');
+  }
+  const session = {
+    blob, log: camState.log, trail: camState.trail, duration,
+    height: camState.height, stepLength: camState.stepLength, square: camState.square,
+  };
+  // Cerrar la cámara sin guardar nada: la revisión se encarga del plano.
+  camera.stop();
+  motion.stop();
+  keepAwake(false);
+  camState.active = false;
+  startReview(session);
 }
 
 $('#cam-mark').addEventListener('click', () => {
+  if (camState.mode === 'video') return toggleRecording();
   const r = camState.reading;
   if (!r) return toast('Sin datos del sensor de orientación.');
   const d = aimDistance(r);
@@ -439,6 +526,7 @@ $('#cam-undo').addEventListener('click', () => {
 
 function setCameraMode(mode) {
   if (mode === camState.mode) return;
+  if (camState.recording) return toast('Detén la grabación para cambiar de modo.');
   if (camState.marks.length) return toast('Deshaz las esquinas marcadas para cambiar de modo.');
   camState.mode = mode;
   camState.pos = { x: 0, y: 0 };
@@ -449,6 +537,7 @@ function setCameraMode(mode) {
 }
 $('#cam-mode-walk').addEventListener('click', () => setCameraMode('walk'));
 $('#cam-mode-point').addEventListener('click', () => setCameraMode('point'));
+$('#cam-mode-video').addEventListener('click', () => setCameraMode('video'));
 
 function numberInput(sel, min, max, key, label) {
   $(sel).addEventListener('change', (e) => {
@@ -475,6 +564,212 @@ $('#cam-done').addEventListener('click', () => {
   const plan = saveCapture(camState.mode === 'walk' ? 'walk' : 'camera', finalCameraPoints(), cameraPlanExtra());
   camState.marks = [];
   navigate(`#/plan/${plan.id}`, true);
+});
+
+// ---------- revisión del video ----------
+
+const WALL_OFFSET = 0.4; // distancia típica entre quien camina y la pared
+const TURN_TOLERANCE = 0.45; // m: desviación mínima del recorrido para contar un giro
+
+const rv = { active: false, session: null, corners: [], url: null, turns: [], finished: false };
+const rvVideo = $('#rv-video');
+const rvView = new PlanView($('#rv-plan'), { autoFit: true, interactive: false });
+
+/** Giros del recorrido: momentos en los que probablemente estabas en una esquina. */
+function detectTurns(trail) {
+  if (trail.length < 3) return [];
+  return simplifyPath(trail, TURN_TOLERANCE).map((i) => trail[i]);
+}
+
+/** Plano sacado solo del recorrido: giros → polígono, pegado a las paredes. */
+function autoPlanPoints(session) {
+  let pts = detectTurns(session.trail).map((p) => ({ x: p.x, y: p.y }));
+  if (returnsToStart(pts)) pts = closeLoop(pts);
+  if (pts.length < 3) return null;
+  pts = offsetPolygon(pts, WALL_OFFSET);
+  return session.square ? orthogonalize(pts, true) : pts;
+}
+
+function startReview(session) {
+  Object.assign(rv, { active: true, session, corners: [], finished: false, turns: detectTurns(session.trail) });
+  if (rv.url) URL.revokeObjectURL(rv.url);
+  rv.url = session.blob ? URL.createObjectURL(session.blob) : null;
+  const loading = $('#rv-loading');
+  loading.hidden = false;
+  loading.textContent = rv.url ? 'Preparando el video…' : 'Sin video: usa el plano automático del recorrido';
+  if (rv.url) {
+    rvVideo.src = rv.url;
+    prepareSeekable(rvVideo).then((dur) => {
+      rv.session.videoDuration = Number.isFinite(dur) && dur > 0 ? dur : session.duration;
+      loading.hidden = true;
+      updateReviewUI();
+    });
+  } else {
+    rvVideo.removeAttribute('src');
+  }
+  $('#rv-chips').innerHTML = rv.turns
+    .map((p, i, all) => {
+      const label = i === 0 ? 'Inicio' : i === all.length - 1 ? 'Final' : `Giro ${i}`;
+      return `<button data-t="${p.t}">${label} · ${formatTime(p.t)}</button>`;
+    })
+    .join('');
+  navigate('#/review', true);
+  updateReviewUI();
+}
+
+function leaveReview() {
+  if (!rv.active) return;
+  rv.active = false;
+  rvVideo.pause();
+  if (!rv.finished) {
+    const pts = rv.corners.length >= 3 ? reviewCornerPoints() : autoPlanPoints(rv.session);
+    if (pts) {
+      saveCapture('video', pts, { height: rv.session.height, stepLength: rv.session.stepLength });
+      toast('Plano del video guardado en "Mis planos"');
+    }
+  }
+  rvVideo.removeAttribute('src');
+  rvVideo.load();
+  if (rv.url) URL.revokeObjectURL(rv.url);
+  rv.url = null;
+}
+
+function reviewCornerPoints() {
+  let pts = rv.corners.map((c) => c.point);
+  if (returnsToStart(pts)) pts = closeLoop(pts);
+  if (rv.session.square && pts.length >= 3) pts = orthogonalize(pts, true);
+  return pts;
+}
+
+/** Semicampo de visión del video según su orientación. */
+function videoFov() {
+  const tanLong = Math.tan(((store.getSettings().cameraFov || 66) * Math.PI) / 360);
+  const w = rvVideo.videoWidth || 9, h = rvVideo.videoHeight || 16;
+  return h >= w ? { tanX: (tanLong * w) / h, tanY: tanLong } : { tanX: tanLong, tanY: (tanLong * h) / w };
+}
+
+/** Rectángulo donde se dibuja la imagen dentro del elemento (object-fit: contain). */
+function videoRect() {
+  const box = rvVideo.getBoundingClientRect();
+  const w = rvVideo.videoWidth || box.width, h = rvVideo.videoHeight || box.height;
+  const k = Math.min(box.width / w, box.height / h);
+  const dw = w * k, dh = h * k;
+  return { left: (box.width - dw) / 2, top: (box.height - dh) / 2, width: dw, height: dh, box };
+}
+
+function currentSample() {
+  return sampleAt(rv.session.log, rvVideo.currentTime || 0);
+}
+
+function updateReviewUI() {
+  if (!rv.active) return;
+  const s = rv.session;
+  const dur = s.videoDuration || s.duration;
+  const t = rvVideo.currentTime || 0;
+  $('#rv-seek').value = dur ? Math.round((t / dur) * 1000) : 0;
+  $('#rv-time').textContent = `${formatTime(t)} / ${formatTime(dur)}`;
+  $('#rv-play').textContent = rvVideo.paused ? '▶' : '❚❚';
+  $('#rv-undo').disabled = rv.corners.length === 0;
+
+  // Marcas de las esquinas tocadas cerca de este instante
+  const r = videoRect();
+  const marks = rv.corners
+    .filter((c) => Math.abs(c.t - t) < 0.4)
+    .map((c) => {
+      const x = r.left + ((c.nx + 1) / 2) * r.width, y = r.top + ((1 - c.ny) / 2) * r.height;
+      return `<circle class="tap" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="14"/>`;
+    });
+  const svg = $('#rv-overlay');
+  svg.setAttribute('viewBox', `0 0 ${r.box.width} ${r.box.height}`);
+  svg.innerHTML = marks.join('');
+
+  // Chips de giros ya revisados
+  $('#rv-chips').querySelectorAll('button').forEach((b) => {
+    b.classList.toggle('done', rv.corners.some((c) => Math.abs(c.t - Number(b.dataset.t)) < 2.5));
+  });
+
+  const sample = currentSample();
+  let ray = null;
+  if (sample) {
+    const { tanX, tanY } = videoFov();
+    const hit = floorHit(sample.pos, s.height, pixelRay(sample.cam, sample.right, sample.top, 0, 0, tanX, tanY));
+    const dir = polarToPoint(1.2, Math.atan2(sample.cam.x, sample.cam.y) * 180 / Math.PI);
+    ray = hit || { x: sample.pos.x + dir.x, y: sample.pos.y + dir.y };
+  }
+  rvView.setExtras({ trail: s.trail, origin: sample?.pos || { x: 0, y: 0 }, ray });
+  rvView.setPoints(rv.corners.map((c) => c.point), false);
+  $('#rv-stats').innerHTML = `<span>Esquinas tocadas <b>${rv.corners.length}</b></span><span>Giros detectados <b>${Math.max(0, rv.turns.length - 2)}</b></span><span>Recorrido <b>${formatLength(pathLength(s.trail, false))}</b></span>`;
+  $('#rv-hint').textContent = rv.corners.length
+    ? 'Sigue con la siguiente esquina. Cuando termines, pulsa Crear plano.'
+    : 'Pausa el video en cada esquina (o toca un giro) y toca el punto donde la esquina toca el suelo.';
+}
+
+rvVideo.addEventListener('timeupdate', updateReviewUI);
+rvVideo.addEventListener('seeked', updateReviewUI);
+rvVideo.addEventListener('play', updateReviewUI);
+rvVideo.addEventListener('pause', updateReviewUI);
+
+$('#rv-play').addEventListener('click', () => {
+  if (!rv.url) return;
+  if (rvVideo.paused) rvVideo.play().catch(() => {});
+  else rvVideo.pause();
+});
+
+$('#rv-seek').addEventListener('input', (e) => {
+  const dur = rv.session.videoDuration || rv.session.duration;
+  rvVideo.pause();
+  rvVideo.currentTime = (Number(e.target.value) / 1000) * dur;
+  updateReviewUI();
+});
+
+$('#rv-chips').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || !rv.url) return;
+  rvVideo.pause();
+  // Justo antes del giro sueles estar mirando la esquina.
+  rvVideo.currentTime = Math.max(0, Number(b.dataset.t) - 0.6);
+});
+
+$('#rv-overlay').addEventListener('click', (e) => {
+  if (!rv.url) return;
+  rvVideo.pause();
+  const r = videoRect();
+  const x = e.clientX - r.box.left - r.left, y = e.clientY - r.box.top - r.top;
+  if (x < 0 || y < 0 || x > r.width || y > r.height) return;
+  const nx = (x / r.width) * 2 - 1, ny = 1 - (y / r.height) * 2;
+  const sample = currentSample();
+  if (!sample) return toast('No hay datos de orientación para este instante.');
+  const { tanX, tanY } = videoFov();
+  const hit = floorHit(sample.pos, rv.session.height, pixelRay(sample.cam, sample.right, sample.top, nx, ny, tanX, tanY));
+  if (!hit) return toast('Toca un punto del suelo, por debajo del horizonte.');
+  rv.corners.push({ t: rvVideo.currentTime, point: hit, nx, ny });
+  vibrate();
+  updateReviewUI();
+});
+
+$('#rv-undo').addEventListener('click', () => {
+  rv.corners.pop();
+  updateReviewUI();
+});
+
+function finishReview(points) {
+  rv.finished = true;
+  const plan = saveCapture('video', points, { height: rv.session.height, stepLength: rv.session.stepLength });
+  navigate(`#/plan/${plan.id}`, true);
+}
+
+$('#rv-auto').addEventListener('click', () => {
+  const pts = autoPlanPoints(rv.session);
+  if (!pts) return toast('El recorrido es demasiado corto para sacar un plano.');
+  finishReview(pts);
+});
+
+$('#rv-done').addEventListener('click', () => {
+  if (rv.corners.length >= 3) return finishReview(reviewCornerPoints());
+  if (rv.corners.length) return toast('Toca al menos 3 esquinas, o usa Automático.');
+  const pts = autoPlanPoints(rv.session);
+  if (!pts) return toast('Toca al menos 3 esquinas en el video.');
+  finishReview(pts);
 });
 
 // ---------- editor ----------
@@ -608,7 +903,7 @@ $('#ed-scale').addEventListener('click', () => {
   const factor = real / seg.length;
   snapshot();
   commitPoints(scalePoints(plan.points, factor), { refit: true });
-  if (plan.mode === 'walk' && plan.stepLength) {
+  if ((plan.mode === 'walk' || plan.mode === 'video') && plan.stepLength) {
     // La medida real también calibra el largo de paso para las próximas mediciones.
     plan.stepLength = Math.min(1.2, Math.max(0.3, plan.stepLength * factor));
     store.saveSettings({ stepLength: +plan.stepLength.toFixed(3) });

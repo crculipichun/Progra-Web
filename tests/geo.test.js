@@ -126,3 +126,44 @@ test('walkBearing usa la parte superior si el teléfono va plano', () => {
   near(walkBearing(cv(0, 80, 0), deviceTopVector(0, 80)) % 360, 0, 1e-9);
   near(walkBearing(cv(270, 5, 0), deviceTopVector(270, 5)), 90, 1e-9);
 });
+
+import { deviceRightVector, pixelRay, floorHit, simplifyPath, offsetPolygon } from '../js/geo.js';
+
+test('pixelRay: el centro de la imagen es la dirección de la cámara', () => {
+  const f = cv(0, 60, 0), r = deviceRightVector(0, 60, 0), u = deviceTopVector(0, 60);
+  const ray = pixelRay(f, r, u, 0, 0, 0.5, 0.7);
+  near(ray.x, f.x); near(ray.y, f.y); near(ray.z, f.z);
+  // la derecha de la imagen con el teléfono vertical mirando al norte es el este
+  near(deviceRightVector(0, 90, 0).x, 1, 1e-9);
+});
+
+test('floorHit: un píxel más abajo en la imagen cae más cerca', () => {
+  const f = cv(0, 70, 0), r = deviceRightVector(0, 70, 0), u = deviceTopVector(0, 70);
+  const centro = floorHit({ x: 0, y: 0 }, 1.4, pixelRay(f, r, u, 0, 0, 0.5, 0.7));
+  const abajo = floorHit({ x: 0, y: 0 }, 1.4, pixelRay(f, r, u, 0, -0.5, 0.5, 0.7));
+  near(centro.y, floorDistance(1.4, -20), 1e-9);
+  assert.ok(abajo.y < centro.y);
+  assert.equal(floorHit({ x: 0, y: 0 }, 1.4, { x: 0, y: 1, z: 0.1 }), null);
+});
+
+test('simplifyPath conserva solo los giros', () => {
+  const path = [];
+  for (let i = 0; i <= 10; i++) path.push({ x: i * 0.4, y: (i % 2) * 0.05 });
+  for (let j = 1; j <= 6; j++) path.push({ x: 4, y: j * 0.5 });
+  assert.deepEqual(simplifyPath(path, 0.3), [0, 10, 16]);
+});
+
+test('offsetPolygon agranda un rectángulo hacia fuera', () => {
+  const r = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }, { x: 0, y: 3 }];
+  near(polygonArea(offsetPolygon(r, 0.5)), 5 * 4, 1e-9);
+  near(polygonArea(offsetPolygon([...r].reverse(), 0.5)), 20, 1e-9);
+});
+
+test('sampleAt devuelve la muestra más cercana', async () => {
+  const { sampleAt } = await import('../js/video.js');
+  const log = [{ t: 0 }, { t: 0.1 }, { t: 0.2 }, { t: 0.5 }];
+  assert.equal(sampleAt(log, 0.16).t, 0.2);
+  assert.equal(sampleAt(log, 0.34).t, 0.2);
+  assert.equal(sampleAt(log, 9).t, 0.5);
+  assert.equal(sampleAt([], 1), null);
+});

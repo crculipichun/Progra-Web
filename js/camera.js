@@ -1,5 +1,5 @@
 // Cámara trasera + sensores de orientación.
-import { cameraVector, deviceTopVector, vectorToAngles, walkBearing } from './geo.js';
+import { cameraVector, deviceTopVector, deviceRightVector, vectorToAngles, walkBearing } from './geo.js';
 
 const SMOOTH = 0.2;
 const smooth = (prev, v) => (prev
@@ -14,6 +14,7 @@ export class CameraCapture {
     this.stream = null;
     this.cam = null; // vector de la cámara suavizado
     this.top = null; // vector superior suavizado
+    this.right = null; // vector derecho suavizado
     this.lastRelative = 0;
     this._relative = (e) => this._onOrientation(e, true);
     this._absolute = (e) => this._onOrientation(e, false);
@@ -54,7 +55,7 @@ export class CameraCapture {
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.video.srcObject = null;
-    this.cam = this.top = null;
+    this.cam = this.top = this.right = null;
   }
 
   _onOrientation(e, relative) {
@@ -64,6 +65,11 @@ export class CameraCapture {
     else if (now - this.lastRelative < 1000) return;
     this.cam = smooth(this.cam, cameraVector(e.alpha, e.beta, e.gamma));
     this.top = smooth(this.top, deviceTopVector(e.alpha, e.beta));
-    this.onReading?.({ ...vectorToAngles(this.cam), heading: walkBearing(this.cam, this.top) });
+    this.right = smooth(this.right, deviceRightVector(e.alpha, e.beta, e.gamma));
+    this.onReading?.({
+      ...vectorToAngles(this.cam),
+      heading: walkBearing(this.cam, this.top),
+      cam: this.cam, top: this.top, right: this.right,
+    });
   }
 }

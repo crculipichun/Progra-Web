@@ -23,6 +23,17 @@ pegarse a la pared. Si no apuntas al suelo, la esquina se marca donde estás.
 **📍 Desde un punto**: te quedas quieto donde veas todas las esquinas, solo giras y apuntas al pie
 de cada una. La distancia se calcula como `altura / tan(ángulo hacia abajo)`.
 
+**🎥 Video**: graba un video mientras recorres la habitación. La app guarda, junto con cada
+fotograma, tu posición (pasos + rumbo) y la orientación exacta del teléfono. Al detener la grabación
+se abre la pantalla de revisión:
+- **Automático**: el plano sale solo del recorrido; cada giro es una esquina y las paredes se
+  colocan a ~40 cm de tu camino.
+- **Tocando el video**: pausa en cada esquina (los botones *Giro 1, Giro 2…* saltan a los
+  momentos en que giraste) y toca el punto donde la esquina toca el suelo. La app lanza un rayo
+  desde la cámara por ese píxel hasta el suelo y obtiene su posición exacta.
+
+El video solo se usa dentro de la app y se descarta al salir de la revisión; el plano queda guardado.
+
 Con **Esquinas a 90°** activado, los lados que casi forman ángulo recto se enderezan.
 El largo de paso (0,70 m por defecto) se calibra solo: en el editor, usa **Corregir medida** en una
 pared medida con cinta métrica y el paso se ajusta para las siguientes mediciones.
@@ -93,6 +104,7 @@ tu propia clave (`KEYSTORE=... KS_PASS=... android/build.sh`).
 | `js/gps.js` | Lectura y promediado del GPS |
 | `js/camera.js` | Cámara trasera y sensores de orientación |
 | `js/motion.js` | Contador de pasos con el acelerómetro |
+| `js/video.js` | Grabación del video y búsqueda de fotogramas |
 | `js/export.js` | Exportación SVG/PNG/JSON/GeoJSON |
 | `js/storage.js` | Guardado local de planos y ajustes |
 | `sw.js`, `manifest.webmanifest` | PWA (instalable y sin conexión) |

@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS = {
   stepLength: 0.7,
   squareCorners: true,
   cameraMode: 'walk',
+  cameraFov: 66, // campo de visión del lado largo del video, en grados
   gpsMinStep: 2,
   gpsMaxAccuracy: 20,
   gpsSampleSeconds: 4,
