@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e3a8a">
+  <meta name="description" content="Levanta planos con la cámara del teléfono o caminando con GPS.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Planos</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="back" class="icon-btn" aria-label="Volver" hidden>
+      <svg viewBox="0 0 24 24" width="24" height="24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <h1 id="title">Planos</h1>
+  </header>
+
+  <main>
+    <!-- Inicio -->
+    <section id="home" class="screen">
+      <div class="new-grid">
+        <button class="card-btn" data-new="camera">
+          <span class="emoji" aria-hidden="true">📷</span>
+          <strong>Con cámara</strong>
+          <small>Desde el centro de la habitación, apunta al pie de cada esquina.</small>
+        </button>
+        <button class="card-btn" data-new="gps">
+          <span class="emoji" aria-hidden="true">🛰️</span>
+          <strong>Con GPS</strong>
+          <small>Camina el borde de un terreno y marca los vértices.</small>
+        </button>
+        <button class="card-btn" data-new="manual">
+          <span class="emoji" aria-hidden="true">✏️</span>
+          <strong>Manual</strong>
+          <small>Dibuja tocando la pantalla y ajusta las medidas.</small>
+        </button>
+      </div>
+      <h2>Mis planos</h2>
+      <ul id="plan-list" class="plan-list"></ul>
+      <p id="empty-list" class="muted">Todavía no tienes planos guardados.</p>
+      <p id="secure-warning" class="warning" hidden>
+        La cámara, el GPS y los sensores solo funcionan si abres la app por <b>HTTPS</b> (o en localhost).
+      </p>
+    </section>
+
+    <!-- Captura por GPS -->
+    <section id="gps" class="screen capture" hidden>
+      <div class="statusbar">
+        <span id="gps-accuracy" class="badge">Buscando GPS…</span>
+        <span id="gps-count" class="muted">0 puntos</span>
+      </div>
+      <svg id="gps-view" class="plan" role="img" aria-label="Vista previa del plano"></svg>
+      <div id="gps-stats" class="stats"></div>
+      <p class="hint">Quédate quieto en cada vértice y pulsa <b>Marcar punto</b>; o usa <b>Grabar</b> para trazar caminando.</p>
+      <div class="toolbar">
+        <button id="gps-mark" class="primary">Marcar punto</button>
+        <button id="gps-record">● Grabar</button>
+        <button id="gps-undo">Deshacer</button>
+        <button id="gps-done" class="accent">Terminar</button>
+      </div>
+    </section>
+
+    <!-- Captura con cámara -->
+    <section id="camera" class="screen capture" hidden>
+      <div class="viewfinder">
+        <video id="cam-video" playsinline muted autoplay></video>
+        <div class="crosshair" aria-hidden="true"></div>
+        <div class="hud">
+          <div><span class="label">Distancia</span><b id="cam-dist">—</b></div>
+          <div><span class="label">Inclinación</span><b id="cam-pitch">—</b></div>
+          <div><span class="label">Rumbo</span><b id="cam-bearing">—</b></div>
+        </div>
+        <div id="cam-tip" class="cam-tip">Apunta la cruz al punto donde la esquina toca el suelo</div>
+        <svg id="cam-view" class="mini-plan" role="img" aria-label="Vista previa"></svg>
+      </div>
+      <div class="cam-controls">
+        <label class="height">Altura del teléfono
+          <span><input id="cam-height" type="number" min="0.3" max="3" step="0.05" inputmode="decimal"> m</span>
+        </label>
+        <div class="toolbar">
+          <button id="cam-mark" class="primary">Marcar esquina</button>
+          <button id="cam-undo">Deshacer</button>
+          <button id="cam-done" class="accent">Terminar</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Editor -->
+    <section id="editor" class="screen" hidden>
+      <input id="plan-name" class="name-input" placeholder="Nombre del plano" aria-label="Nombre del plano">
+      <svg id="editor-view" class="plan" role="img" aria-label="Plano"></svg>
+      <div id="editor-stats" class="stats"></div>
+      <p id="editor-hint" class="hint"></p>
+      <div class="toolbar wrap">
+        <button id="ed-add" aria-pressed="false">＋ Añadir puntos</button>
+        <button id="ed-delete" disabled>Borrar vértice</button>
+        <button id="ed-scale" disabled>Corregir medida</button>
+        <button id="ed-close">Abrir/cerrar</button>
+        <button id="ed-fit">Encuadrar</button>
+      </div>
+      <div class="toolbar wrap">
+        <button id="ed-svg" class="primary">SVG</button>
+        <button id="ed-png">PNG</button>
+        <button id="ed-json">JSON</button>
+        <button id="ed-geojson" hidden>GeoJSON</button>
+        <button id="ed-remove" class="danger">Eliminar</button>
+      </div>
+      <details class="segments">
+        <summary>Medidas de los lados</summary>
+        <ol id="segment-list"></ol>
+      </details>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

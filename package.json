@@ -1,0 +1,11 @@
+{
+  "name": "planos-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "App móvil (PWA) para levantar planos con la cámara o caminando con GPS",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "test": "node --test tests/*.test.js"
+  }
+}
